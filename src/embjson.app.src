@@ -1,0 +1,3 @@
+{application, embjson,
+ [{description, "Embedded JSON"},
+  {vsn, "0.0.1"}]}.
