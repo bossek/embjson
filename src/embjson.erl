@@ -26,6 +26,21 @@
 
 -export([parse_transform/2]).
 
+%% ====================================================================
+%% embjson behaviour
+%% ====================================================================
+
+-callback object(Proplist :: proplists:proplist()) -> term().
+-callback array(List :: list()) -> term().
+-callback string(String :: string()) -> term().
+-callback number(Number :: number()) -> term().
+-callback boolean(Boolean :: boolean()) -> term().
+-callback null(Null :: 'null') -> term().
+
+%% ====================================================================
+%% transformation
+%% ====================================================================
+
 -define(DEFAULT_FUNCTION, '@json').
 
 -record(options, {callback, function}).
@@ -64,10 +79,14 @@ trans_clause({clause, Line, Vars, Guards, Exprs}, Opts) ->
 trans_expr({call, _Line, {atom, _Line, Function}, [Param]}, Opts)
   when Function =:= Opts#options.function ->
     json(Param, Opts);
+trans_expr({call, Line1, {'fun', Line2, {clauses, Clauses}}, Params}, Opts) ->
+    {'call', Line1, {'fun', Line2, {clauses, trans_clauses(Clauses, Opts)}}, Params};
 trans_expr({match, Line, Left, Right}, Opts) ->
     {match, Line, trans_expr(Left, Opts), trans_expr(Right, Opts)};
 trans_expr({'case', Line, Expr, Clauses}, Opts) ->
     {'case', Line, trans_expr(Expr, Opts), trans_clauses(Clauses, Opts)};
+trans_expr({op, Line, Op, Left, Right}, Opts) ->
+    {op, Line, Op, trans_expr(Left, Opts), trans_expr(Right, Opts)};
 trans_expr(AST, _Opts) ->
     AST.
 
