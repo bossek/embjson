@@ -8,11 +8,8 @@
 
 parse_transform(AST, _Options) ->
     EmbjsonOpts = embjson_opts(AST),
-    % io:format("~p, ~p, ~p~n", [AST, Options, EmbjsonOpts]),
     TransModule = fun(AttrOrFun) -> trans_module(AttrOrFun, EmbjsonOpts) end,
-    NewAST = lists:map(TransModule, AST),
-    % io:format("~p~n", [NewAST]),
-    NewAST.
+    lists:map(TransModule, AST).
 
 embjson_opts(AST) ->
     embjson_opts(AST, undefined).
@@ -31,7 +28,6 @@ embjson_opts([_|AST], Module) ->
 trans_module({function, Line, Name, ParamNum, Clauses}, Opts) ->
     {function, Line, Name, ParamNum, trans_clauses(Clauses, Opts)};
 trans_module(AST, _Opts) ->
-    % io:format("Other: ~p~n", [AST]),
     AST.
 
 trans_clauses(Clauses, Opts) ->
@@ -49,7 +45,6 @@ trans_expr({match, Line, Left, Right}, Opts) ->
 trans_expr({'case', Line, Expr, Clauses}, Opts) ->
     {'case', Line, trans_expr(Expr, Opts), trans_clauses(Clauses, Opts)};
 trans_expr(AST, _Opts) ->
-    % io:format("Other: ~p~n", [AST]),
     AST.
 
 json({tuple, Line, _} = Object, Opts) ->
@@ -78,6 +73,16 @@ value({nil, Line} = Array, Opts) ->
     callback(array, Line, array(Array, Opts), Opts);
 value({cons, Line, _, _} = Array, Opts) ->
     callback(array, Line, array(Array, Opts), Opts);
+value({string, Line, _} = String, Opts) ->
+    callback(string, Line, String, Opts);
+value({atom, Line, null} = Null, Opts) ->
+    callback(null, Line, Null, Opts);
+value({atom, Line, B} = Boolean, Opts) when is_boolean(B) ->
+    callback(boolean, Line, Boolean, Opts);
+value({float, Line, _} = Float, Opts) ->
+    callback(number, Line, Float, Opts);
+value({integer, Line, _} = Integer, Opts) ->
+    callback(number, Line, Integer, Opts);
 value(Other, _Opts) ->
     Other.
 
