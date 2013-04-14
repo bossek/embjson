@@ -21,7 +21,7 @@
 -embjson([{callback, ?MODULE}, {function, '@json'}]).
 -behaviour(embjson).
 
--export([object/1, array/1, string/1, number/1, boolean/1, null/1]).
+-export([object/1, array/1, string/1, number/1, boolean/1, null/1, other/1]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -61,6 +61,39 @@ static_object_test() -> ?assert(
     })
 ).
 
+variables_test() ->
+    String = "string",
+    Number = -123,
+    ?assert(
+        {struct, [
+	    {"number", Number},
+            {"string", String}
+        ]}
+        =:=
+        '@json'({
+	    "number": Number,
+	    "string": String
+        })
+    ).
+
+json_variable_test() ->
+    Json = '@json'({"test": 123}),
+    ?assert(
+        {struct, [
+            {"obj", {struct, [
+                {"test", 123}
+            ]}}
+        ]}
+        =:=
+        '@json'({
+            "obj": Json
+        })
+    ).
+
+json_in_try_test() ->
+    Json = try '@json'({"abc": "efg"}) catch _:_ -> bad end,
+    ?assert({struct, [{"abc", "efg"}]} =:= Json).
+
 %% ====================================================================
 %% Callbacks generating JSON structure used in yaws.
 %% @see https://github.com/klacke/yaws/blob/master/src/json2.erl
@@ -72,3 +105,4 @@ string(String)   -> String.
 number(Number)   -> Number.
 boolean(Boolean) -> Boolean.
 null(Null)       -> Null.
+other(Value)     -> Value.
