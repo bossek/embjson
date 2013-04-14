@@ -36,6 +36,7 @@
 -callback number(Number :: number()) -> term().
 -callback boolean(Boolean :: boolean()) -> term().
 -callback null(Null :: 'null') -> term().
+-callback other(Other :: term()) -> term().
 
 %% ====================================================================
 %% transformation
@@ -70,11 +71,13 @@ trans_module(AST, _Opts) ->
     AST.
 
 trans_clauses(Clauses, Opts) ->
-    lists:map(fun(Clause) -> trans_clause(Clause, Opts) end, Clauses).
+    [trans_clause(Clause, Opts) || Clause <- Clauses].
 
 trans_clause({clause, Line, Vars, Guards, Exprs}, Opts) ->
-    TransExpr = fun(AST) -> trans_expr(AST, Opts) end,
-    {clause, Line, Vars, Guards, lists:map(TransExpr, Exprs)}.
+    {clause, Line, Vars, Guards, trans_exprs(Exprs, Opts)}.
+
+trans_exprs(Exprs, Opts) ->
+    [trans_expr(Expr, Opts) || Expr <- Exprs].
 
 trans_expr({call, _Line, {atom, _Line, Function}, [Param]}, Opts)
   when Function =:= Opts#options.function ->
@@ -87,6 +90,9 @@ trans_expr({'case', Line, Expr, Clauses}, Opts) ->
     {'case', Line, trans_expr(Expr, Opts), trans_clauses(Clauses, Opts)};
 trans_expr({op, Line, Op, Left, Right}, Opts) ->
     {op, Line, Op, trans_expr(Left, Opts), trans_expr(Right, Opts)};
+trans_expr({'try', Line, Exprs, Patterns, Catches, Afters}, Opts) ->
+    {'try', Line, trans_exprs(Exprs, Opts), trans_clauses(Patterns, Opts),
+                  trans_clauses(Catches, Opts), trans_exprs(Afters, Opts)};
 trans_expr(AST, _Opts) ->
     AST.
 
@@ -126,8 +132,9 @@ value({float, Line, _} = Float, Opts) ->
     callback(number, Line, Float, Opts);
 value({integer, Line, _} = Integer, Opts) ->
     callback(number, Line, Integer, Opts);
-value(Other, _Opts) ->
-    Other.
+value(Other, Opts) ->
+    Line = erlang:element(2, Other),
+    callback(other, Line, Other, Opts).
 
 callback(Function, Line, Param, Opts) ->
     {call, Line, {remote, Line, {atom, Line, Opts#options.callback}, {atom, Line, Function}}, [Param]}.
