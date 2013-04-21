@@ -21,7 +21,7 @@
 -embjson([{callback, ?MODULE}, {function, '@json'}]).
 -behaviour(embjson).
 
--export([object/1, array/1, string/1, number/1, boolean/1, null/1, other/1]).
+-export([property/1, object/1, array/1, string/1, number/1, boolean/1, null/1, other/1]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -41,6 +41,7 @@ static_object_test() -> ?assert(
     {struct, [
         {"string", "string value"},
         {"number", 12345},
+        {"neg_num", -3.14},
         {"boolean", true},
         {"null", null},
         {"array", {array, ["a", "b", false, null]}},
@@ -52,6 +53,7 @@ static_object_test() -> ?assert(
     '@json'({
         "string": "string value",
         "number": 12345,
+        "neg_num": (-3.14),
         "boolean": true,
         "null": null,
         "array": ["a", "b", false, null],
@@ -99,6 +101,7 @@ json_in_try_test() ->
 %% @see https://github.com/klacke/yaws/blob/master/src/json2.erl
 %% ====================================================================
 
+property(Name)   -> Name.
 object(Proplist) -> {struct, Proplist}.
 array(List)      -> {array, List}.
 string(String)   -> String.

@@ -30,6 +30,7 @@
 %% embjson behaviour
 %% ====================================================================
 
+-callback property(Name :: string()) -> term().
 -callback object(Proplist :: proplists:proplist()) -> term().
 -callback array(List :: list()) -> term().
 -callback string(String :: string()) -> term().
@@ -44,97 +45,152 @@
 
 -define(DEFAULT_FUNCTION, '@json').
 
--record(options, {callback, function}).
+-record(options, {callback, function = ?DEFAULT_FUNCTION, file}).
 
 parse_transform(AST, _Options) ->
-    EmbjsonOpts = embjson_opts(AST),
-    TransModule = fun(AttrOrFun) -> trans_module(AttrOrFun, EmbjsonOpts) end,
-    lists:map(TransModule, AST).
+    Tree = erl_syntax:form_list(AST),
+    Opts = embjson_opts(Tree),
+    erl_syntax:revert_forms(erl_syntax_lib:map(embjson(Opts), Tree)).
 
-embjson_opts(AST) ->
-    embjson_opts(AST, undefined).
+%% @doc Finds options (proplist) in 'embjson' attribute.
+%% Keys:
+%%     callback
+%%         - Module with callback functions. If callback module is not
+%%           configured, embjson uses transformed module.
+%%     function
+%%         - Name of a function used for encapsulating of embedded JSON.
+%%           If function is not defined, embjson uses '@json'.
+%% @end
+embjson_opts(Tree) ->
+    erl_syntax_lib:fold(fun find_options/2, #options{}, Tree).
 
-embjson_opts([{attribute, _, module, Module}|AST], _) ->
-    embjson_opts(AST, Module);
-embjson_opts([{attribute, _, embjson, Opts}|_], Module) ->
-    Callback = proplists:get_value(callback, Opts, Module),
-    Function = proplists:get_value(function, Opts, ?DEFAULT_FUNCTION),
-    #options{callback = Callback, function = Function};
-embjson_opts([], Module) ->
-    #options{callback = Module, function = ?DEFAULT_FUNCTION};
-embjson_opts([_|AST], Module) ->
-    embjson_opts(AST, Module).
+find_options(Node, Options) ->
+    case erl_syntax:type(Node) of
+        attribute ->
+            case erl_syntax_lib:analyze_attribute(Node) of
+                {embjson, Info} ->
+                    fill_options(Info, Options);
+                {module, Module} ->
+                    fill_callback(Module, Options);
+                {file, {Name, _}} ->
+                    Options#options{file = Name};
+                _ ->
+                    Options
+            end;
+        _ ->
+            Options
+    end.
 
-trans_module({function, Line, Name, ParamNum, Clauses}, Opts) ->
-    {function, Line, Name, ParamNum, trans_clauses(Clauses, Opts)};
-trans_module(AST, _Opts) ->
-    AST.
+fill_options({embjson, Props}, Options) ->
+    Callback = proplists:get_value(callback, Props, Options#options.callback),
+    Function = proplists:get_value(function, Props, ?DEFAULT_FUNCTION),
+    #options{callback = Callback, function = Function}.
 
-trans_clauses(Clauses, Opts) ->
-    [trans_clause(Clause, Opts) || Clause <- Clauses].
+fill_callback(Module, Options) ->
+    case Options#options.callback of
+        undefined ->
+            Options#options{callback = Module};
+        _ ->
+            Options
+    end.
 
-trans_clause({clause, Line, Vars, Guards, Exprs}, Opts) ->
-    {clause, Line, Vars, Guards, trans_exprs(Exprs, Opts)}.
+embjson(Opts) ->
+    fun(Node) ->
+        case erl_syntax:type(Node) of
+            application ->
+                case erl_syntax_lib:analyze_application(Node) of
+                    {Name, 1} when Name =:= Opts#options.function ->
+                        F = fun(Tree, Acc) -> json(Tree, Acc, Opts) end,
+                        erl_syntax_lib:fold_subtrees(F, undefined, Node);
+                    _ ->
+                        Node
+                end;
+            _ ->
+                Node
+        end
+    end.
 
-trans_exprs(Exprs, Opts) ->
-    [trans_expr(Expr, Opts) || Expr <- Exprs].
+json(Tree, Result, Opts) ->
+    case erl_syntax:type(Tree) of
+        atom ->
+            Value = erl_syntax:atom_value(Tree),
+            Value = Opts#options.function,
+            Result;
+        nil ->
+            callback(array, array(Tree, Opts), Opts);
+        list ->
+            callback(array, array(Tree, Opts), Opts);
+        tuple ->
+            callback(object, object(Tree, Opts), Opts);
+        _ ->
+            embjson_error(embjson_invalid_json, Tree, Opts)
+    end.
 
-trans_expr({call, _Line, {atom, _Line, Function}, [Param]}, Opts)
-  when Function =:= Opts#options.function ->
-    json(Param, Opts);
-trans_expr({call, Line1, {'fun', Line2, {clauses, Clauses}}, Params}, Opts) ->
-    {'call', Line1, {'fun', Line2, {clauses, trans_clauses(Clauses, Opts)}}, Params};
-trans_expr({match, Line, Left, Right}, Opts) ->
-    {match, Line, trans_expr(Left, Opts), trans_expr(Right, Opts)};
-trans_expr({'case', Line, Expr, Clauses}, Opts) ->
-    {'case', Line, trans_expr(Expr, Opts), trans_clauses(Clauses, Opts)};
-trans_expr({op, Line, Op, Left, Right}, Opts) ->
-    {op, Line, Op, trans_expr(Left, Opts), trans_expr(Right, Opts)};
-trans_expr({'try', Line, Exprs, Patterns, Catches, Afters}, Opts) ->
-    {'try', Line, trans_exprs(Exprs, Opts), trans_clauses(Patterns, Opts),
-                  trans_clauses(Catches, Opts), trans_exprs(Afters, Opts)};
-trans_expr(AST, _Opts) ->
-    AST.
+object(Tree, Opts) ->
+    Object = [pair(E, Opts) || E <- erl_syntax:tuple_elements(Tree)],
+    erl_syntax:copy_attrs(Tree, erl_syntax:list(Object)).
 
-json({tuple, Line, _} = Object, Opts) ->
-    callback(object, Line, object(Object, Opts), Opts);
-json({nil, Line} = Array, Opts) ->
-    callback(array, Line, array(Array, Opts), Opts);
-json({cons, Line, _, _} = Array, Opts) ->
-    callback(array, Line, array(Array, Opts), Opts).
+pair(Tree, Opts) ->
+    case erl_syntax:type(Tree) of
+        module_qualifier ->
+            Name = erl_syntax:module_qualifier_argument(Tree),
+            case erl_syntax:type(Name) of
+                string ->
+                    P = callback(property, Name, Opts),
+                    V = value(erl_syntax:module_qualifier_body(Tree), Opts),
+                    erl_syntax:copy_attrs(Tree, erl_syntax:tuple([P, V]));
+                _ ->
+                    embjson_error(embjson_invalid_property_name, Tree, Opts)
+            end;
+        _ ->
+            embjson_error(embjson_invalid_object_property, Tree, Opts)
+    end.
 
-object({tuple, Line, Props}, Opts) ->
-    object(Props, Opts, Line).
+array(Tree, Opts) ->
+    case erl_syntax:type(Tree) of
+        nil ->
+            Tree;
+        list ->
+            List = [value(E, Opts) || E <- erl_syntax:list_elements(Tree)],
+            erl_syntax:copy_attrs(Tree, erl_syntax:list(List))
+    end.
 
-object([], _Opts, LastLine) ->
-    {nil, LastLine};
-object([{remote, Line, Name, Value}|Props], Opts, _) ->
-    {cons, Line, {tuple, Line, [Name, value(Value, Opts)]}, object(Props, Opts, Line)}.
+value(Tree, Opts) ->
+    {F, T} = case erl_syntax:type(Tree) of
+                 prefix_expr -> {get_prefix_expr_callback(Tree), Tree};
+                 integer     -> {number, Tree};
+                 float       -> {number, Tree};
+                 string      -> {string, Tree};
+                 atom        -> {atom(Tree, Opts), Tree};
+                 tuple       -> {object, object(Tree, Opts)};
+                 nil         -> {array, array(Tree, Opts)};
+                 list        -> {array, array(Tree, Opts)};
+                 _           -> {other, Tree}
+             end,
+    callback(F, T, Opts).
 
-array({nil, Line}, _Opts) ->
-    {nil, Line};
-array({cons, Line, Value, Tail}, Opts) ->
-    {cons, Line, value(Value, Opts), array(Tail, Opts)}.
+get_prefix_expr_callback(Tree) ->
+    case erl_syntax:type(Tree) of
+        prefix_expr -> get_prefix_expr_callback(erl_syntax:prefix_expr_argument(Tree));
+        integer     -> number;
+        float       -> number;
+        _           -> other
+    end.
 
-value({tuple, Line, _} = Object, Opts) ->
-    callback(object, Line, object(Object, Opts), Opts);
-value({nil, Line} = Array, Opts) ->
-    callback(array, Line, array(Array, Opts), Opts);
-value({cons, Line, _, _} = Array, Opts) ->
-    callback(array, Line, array(Array, Opts), Opts);
-value({string, Line, _} = String, Opts) ->
-    callback(string, Line, String, Opts);
-value({atom, Line, null} = Null, Opts) ->
-    callback(null, Line, Null, Opts);
-value({atom, Line, B} = Boolean, Opts) when is_boolean(B) ->
-    callback(boolean, Line, Boolean, Opts);
-value({float, Line, _} = Float, Opts) ->
-    callback(number, Line, Float, Opts);
-value({integer, Line, _} = Integer, Opts) ->
-    callback(number, Line, Integer, Opts);
-value(Other, Opts) ->
-    Line = erlang:element(2, Other),
-    callback(other, Line, Other, Opts).
+atom(Tree, Opts) ->
+    case erl_syntax:atom_value(Tree) of
+        true  -> boolean;
+        false -> boolean;
+        null  -> null;
+        _     -> embjson_error(embjson_invalid_value, Tree, Opts)
+    end.
 
-callback(Function, Line, Param, Opts) ->
-    {call, Line, {remote, Line, {atom, Line, Opts#options.callback}, {atom, Line, Function}}, [Param]}.
+callback(Function, Param, Opts) ->
+    M = erl_syntax:atom(Opts#options.callback),
+    F = erl_syntax:atom(Function),
+    A = erl_syntax:application(M, F, [Param]),
+    erl_syntax:set_pos(A, erl_syntax:get_pos(Param)).
+
+embjson_error(Error, Tree, Opts) ->
+    Detail = [{file, Opts#options.file}, {line, erl_syntax:get_pos(Tree)}],
+    error({Error, Detail}).
