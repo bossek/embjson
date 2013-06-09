@@ -18,10 +18,7 @@
 
 -module(embjson_tests).
 -compile({parse_transform, embjson}).
--embjson([{callback, ?MODULE}, {function, '@json'}]).
--behaviour(embjson).
-
--export([property/1, object/1, array/1, string/1, number/1, boolean/1, null/1, other/1]).
+-embjson([{callback, embjson_yaws_json2}, {function, '@json'}]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -95,17 +92,3 @@ json_variable_test() ->
 json_in_try_test() ->
     Json = try '@json'({"abc": "efg"}) catch _:_ -> bad end,
     ?assert({struct, [{"abc", "efg"}]} =:= Json).
-
-%% ====================================================================
-%% Callbacks generating JSON structure used in yaws.
-%% @see https://github.com/klacke/yaws/blob/master/src/json2.erl
-%% ====================================================================
-
-property(Name)   -> Name.
-object(Proplist) -> {struct, Proplist}.
-array(List)      -> {array, List}.
-string(String)   -> String.
-number(Number)   -> Number.
-boolean(Boolean) -> Boolean.
-null(Null)       -> Null.
-other(Value)     -> Value.
