@@ -22,19 +22,19 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
-empty_top_level_object_test() -> ?assert(
+empty_top_level_object_test() -> ?assertEqual(
     {struct, []}
-    =:=
+    ,
     '@json'({})
 ).
 
-empty_top_level_array_test() -> ?assert(
+empty_top_level_array_test() -> ?assertEqual(
     {array, []}
-    =:=
+    ,
     '@json'([])
 ).
 
-static_object_test() -> ?assert(
+static_object_test() -> ?assertEqual(
     {struct, [
         {"string", "string value"},
         {"number", 12345},
@@ -46,7 +46,7 @@ static_object_test() -> ?assert(
             {"boolean", false}
         ]}}
     ]}
-    =:=
+    ,
     '@json'({
         "string": "string value",
         "number": 12345,
@@ -63,12 +63,12 @@ static_object_test() -> ?assert(
 variables_test() ->
     String = "string",
     Number = -123,
-    ?assert(
+    ?assertEqual(
         {struct, [
 	    {"number", Number},
             {"string", String}
         ]}
-        =:=
+        ,
         '@json'({
 	    "number": Number,
 	    "string": String
@@ -77,13 +77,13 @@ variables_test() ->
 
 json_variable_test() ->
     Json = '@json'({"test": 123}),
-    ?assert(
+    ?assertEqual(
         {struct, [
             {"obj", {struct, [
                 {"test", 123}
             ]}}
         ]}
-        =:=
+        ,
         '@json'({
             "obj": Json
         })
@@ -91,4 +91,4 @@ json_variable_test() ->
 
 json_in_try_test() ->
     Json = try '@json'({"abc": "efg"}) catch _:_ -> bad end,
-    ?assert({struct, [{"abc", "efg"}]} =:= Json).
+    ?assertEqual({struct, [{"abc", "efg"}]}, Json).
